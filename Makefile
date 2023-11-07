@@ -1,7 +1,12 @@
 cc=gcc
 elf_parser=ElfParser.c ElfParser.h
 common=Common.h
-lazy_loader=$(common) $(elf_parser) LazyLoader.c
+apager=$(common) $(elf_parser) apager.c
 
-LazyLoader: $(lazy_loader)
-	$(cc) -g -static -Wl,-Ttext-segment=0x200000 $(lazy_loader) -o $@
+apager: $(apager)
+	$(cc) -g -static -Wl,-Ttext-segment=0x200000 $(apager) -o $@
+
+
+
+hello_world_static: hello_world.c
+	$(cc) -g -static hello_world.c -o hello_world_static

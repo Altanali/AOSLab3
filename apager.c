@@ -220,11 +220,9 @@ int main(int argc, char *argv[], char *envp[]) {
 	Elf64_Phdr pheaders[header.e_phnum];
 	switch(header.e_type) {
 		case ET_EXEC:
-			printf("ELF Type Executable\n");
 			exec_elf64(elf_memory, &header, argc - 1, &argv[1], envp);	
 			break;
 		case ET_DYN: 
-			printf("ELF Type Dynamic\n");
 			exec_elf64(elf_memory, &header, argc - 1, &argv[1], envp);
 			break;
 		default:
