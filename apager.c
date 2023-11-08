@@ -140,7 +140,7 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 	esp = (void *)(STACK_START + STACK_SIZE);
 
 	/* push env to stack */
-	char **envptr;
+	char **envptr = envp;
 	size_t len;
 	envc = 0;
 	while(*envptr != NULL) {
@@ -151,6 +151,7 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 		esp -= (len + 1);
 		memcpy(esp, envp[i], len + 1);
 	}
+	envp_strings = esp;
 
 	//push argv onto the stack backwards
 	for (int i = argc - 1; i >= 0; i--) {
@@ -176,7 +177,7 @@ void exec_elf64(char *elf, Elf64_Ehdr *header, int argc, char **argv, char **env
 	uint64_t load_size = calculate_load_size(header->e_phnum, pheaders);
 
 	//Actually load the segments into memory
-	load_segments(elf, header->e_phnum,  pheaders, load_size);
+	load_segments(elf, header->e_phnum,  pheaders);
 
 	Elf64_Shdr sheaders[header->e_shnum];
 	uint16_t str_table_dex = header->e_shstrndx;
