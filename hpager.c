@@ -2,6 +2,7 @@
 #include "ElfParser.h"
 #include <signal.h>
 
+#define PAGES_PER_FAULT 3
 int elf_fd = 0;
 int envc = 0;
 int num_strings = 0;
@@ -276,12 +277,21 @@ void exec_elf64(char *elf, Elf64_Ehdr *header, int argc, char **argv, char **env
 	
 }
 
-
+Elf64_Phdr *find_segment_for_addr(Elf64_Addr addr) {
+	Elf64_Phdr *ph;
+	int i;
+	for(i = 0, ph = pheaders; i < elf_header->e_phnum; ++i, ++ph) {
+		if(ph->p_type != PT_LOAD) continue;
+		if((ph->p_vaddr <= addr) && ((ph->p_vaddr + ph->p_memsz) >= addr)) {
+			return ph;
+		}
+	}
+	return NULL;
+}
 
 void sigsegv_handler(int sig, siginfo_t *info, void *unused) {
 	char *msg;
 	Elf64_Addr fault_addr = (Elf64_Addr)info->si_addr;
-	// fprintf(stderr, "fault_addr %p\n", (void *)(fault_addr));
 	if((void *)fault_addr == NULL) {
 		msg = "Segmentation Fault: Invalid memory access.\n";
 		write(1, msg, strlen(msg) + 1); //fd=1 -> stderr
@@ -291,26 +301,35 @@ void sigsegv_handler(int sig, siginfo_t *info, void *unused) {
 	int i;
 	int target_segment = -1;
 	Elf64_Phdr *target_phdr = NULL;
-	Elf64_Phdr *ph;
-	// printf("fault on: %p\n", (void *)(fault_addr));
-	for(i = 0, ph = pheaders; i < elf_header->e_phnum; ++i, ++ph) {
-		if(ph->p_type != PT_LOAD) continue;
-		// printf("boundaries: (%p, %p)\n", (void *)(ph->p_vaddr), (void *)(ph->p_vaddr + ph->p_memsz));
-		if((ph->p_vaddr <= fault_addr) && ((ph->p_vaddr + ph->p_memsz) >= fault_addr)) {
-			target_segment = i;
-			target_phdr = ph;
-			break;
-			//load a page from this segment!
-			//page address is going to be the address of fault_addr rounded down to the nearest page. 
-		}
-	}
-	if(target_segment == -1) {
+	target_phdr = find_segment_for_addr(fault_addr);
+	if(target_phdr == NULL) {
 		msg = "Segmentation Fault: Bad memory address.\n";
 		write(1, msg, strlen(msg) + 1);
 		exit(1);
 	}
 	//else we load a single page from the segment defined by target_phdr
-	map_page_from_vaddr(fault_addr, target_phdr);
+	void *page = map_page_from_vaddr(fault_addr, target_phdr);
+
+	//Map additional pages based on simple heuristic
+	if(PAGES_PER_FAULT > 1) {
+		//try the next page over
+		
+		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr + PAGE_SIZE + 1);
+		printf("segment_start: %p, next segment: %p\n", (void *)(ELF_PAGESTART(fault_addr)), (void *)(next_segment));
+		target_phdr = find_segment_for_addr(next_segment);
+		if(target_phdr) 
+			map_page_from_vaddr(fault_addr, target_phdr);
+		
+	}
+	if(PAGES_PER_FAULT > 2) {
+		//try the previous page
+		
+		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr - PAGE_SIZE);
+		printf("segment_start: %p, next segment: %p\n", (void *)(ELF_PAGESTART(fault_addr)), (void *)(next_segment));
+		target_phdr = find_segment_for_addr(next_segment);
+		if(target_phdr) 
+			map_page_from_vaddr(fault_addr, target_phdr);		
+	}
 	return;
 }
 
