@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "ElfParser.h"
 
 void read_elf_header_64(char *elf, Elf64_Ehdr *header) {
@@ -72,35 +73,37 @@ uint64_t calculate_load_size(Elf64_Half phnum, Elf64_Phdr pheaders[]) {
 	return result;
 }
 
-void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[], char *memory, size_t load_size) {
+void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[], size_t load_size) {
 	Elf64_Half i;
 	Elf64_Off offs;
 	Elf64_Phdr *ppntr;
 	Elf64_Addr addr;
-	Elf64_Addr start_address = (Elf64_Addr)(memory);
-	Elf64_Addr end_address = (Elf64_Addr)(memory) + load_size;
 	char *curr;
-	int prot;
-	printf("Start address: %p\nEnd address: %p\n", (char *)(start_address), (char *)(end_address));
+	int prot, prot_temp;
+	prot_temp = PROT_READ | PROT_WRITE;
 	for(i = 0, ppntr = pheaders; i < phnum; ++i, ++ppntr) {
-		if(ppntr->p_type != PT_LOAD || ppntr->p_memsz == 0) continue;
-		curr = elf + ppntr->p_offset;
-		addr = ppntr->p_vaddr + start_address;
-		if((addr + ppntr->p_memsz) > end_address) 
-			handle_error("(ElfParser.c: load_segments) segment exceeds memory boundary.\n");
-		memmove((char *)(addr), curr, ppntr->p_filesz);
-		
-		if((ppntr->p_flags & PF_R)) {
-			prot |= PROT_READ;
-		}
-		if((ppntr->p_flags & PF_W)) {
-			prot |= PROT_WRITE;
-		}
-		if(ppntr->p_flags & PF_X) {
-			prot |= PROT_EXEC;
-		}
 
-		mprotect((void *)(addr), ppntr->p_memsz, prot);
+		if(ppntr->p_type != PT_LOAD || ppntr->p_memsz == 0) continue;
+		prot = 0;
+		curr = elf + ppntr->p_offset;
+
+		size_t align = ppntr->p_vaddr % sysconf(_SC_PAGE_SIZE);
+		size_t v_addr = ppntr->p_vaddr - align;
+		size_t ofs = ppntr->p_offset - align; //compensate for additional padding at beginning of page
+		void *end;
+		//Map the entire segment to the memory address given by ppnt->vaddr
+		void *temp = (char*) mmap((void*) v_addr, align + ppntr->p_memsz, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		if(temp == MAP_FAILED)
+				handle_error("(ElfParser.c: load_segments) segment mmap failed");
+		//copy file at ppntr->offs to ppntr->offs + ppntr->p_filesz TO ppntr->v_addr
+		memmove((void *)ppntr->p_vaddr, elf + ppntr->p_offset, ppntr->p_filesz);
+		if((ppntr->p_flags & PF_R)) 
+			prot |= PROT_READ;
+		if((ppntr->p_flags & PF_W)) 
+			prot |= PROT_WRITE;
+		if(ppntr->p_flags & PF_X) 
+			prot |= PROT_EXEC;
+		mprotect(temp, align + ppntr->p_memsz, prot);
 	}
 }
 
