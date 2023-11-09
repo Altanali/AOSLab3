@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 int main() {
+	int i = 0; 
 	char msg[10000];
 	fgets(msg, 1000, stdin);
 

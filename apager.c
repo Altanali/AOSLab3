@@ -90,7 +90,6 @@ int create_elf_tables(Elf64_Ehdr *header, char *envp[], int argc, void *esp) {
 
 	/*esp is now at the "top" of the stack - but we haven't loaded anything yet,
 	just allocated the space for it
-	Growing the stack manually. 
 	*/
 	*(long *)esp = (long)argc;
 	esp += sizeof(long);

@@ -2,25 +2,20 @@
 #include "ElfParser.h"
 #include <signal.h>
 #include <fcntl.h>
-#ifndef PAGES_PER_FAULT
-#define PAGES_PER_FAULT 2
-#endif
-int elf_fd = 0;
+
+int segfault_fd = 0;
 FILE *segfault_out = NULL;
+int elf_fd = 0;
 int envc = 0;
-int num_strings = 0;
 Elf64_Addr program_header_address = 0;
 Elf64_Phdr *pheaders = NULL;
 Elf64_Ehdr *elf_header = NULL;
 Elf64_Addr virt_program_entry = 0;
 Elf64_Addr exec_stack_pointer = 0;
-Elf64_Addr bss_low = 0;
-Elf64_Addr bss_high = 0;
-char *argv_strings, *envp_strings, *elf_memory, **string_table, *section_name_data;
+char *argv_strings, *envp_strings, *elf_memory;
 void *esp;
 
 void setup_handlers(struct sigaction *action);
-void print_string_table();
 
 void *map_page_from_vaddr(Elf64_Addr v_addr, Elf64_Phdr *ph) {
 	assert(ph->p_vaddr <= v_addr && v_addr <= (ph->p_vaddr + ph->p_memsz));
@@ -35,9 +30,9 @@ void *map_page_from_vaddr(Elf64_Addr v_addr, Elf64_Phdr *ph) {
 
 	Elf64_Addr page_start = ELF_PAGESTART(v_addr);
 	//retreive the target page
-	void *page = mmap((void *)page_start, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	void *page = mmap((void *)page_start, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, 0, 0);
 	if(page == MAP_FAILED) 
-		handle_error("(hpager.c: map_page_from_vaddr): Failed to mmap a page.\n");
+		handle_error("(dpager.c: map_page_from_vaddr): Failed to mmap a page.\n");
 	memset(page, 0, PAGE_SIZE);
 
 	//check that if nothing to copy: 
@@ -186,7 +181,7 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 
 	void *stack_low = mmap((void *)STACK_START, STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN, 0, 0);
 	if(stack_low == MAP_FAILED) 
-		handle_error("(hpager.c: setup_stack) stack mmap failed.\n");
+		handle_error("(LazyLoader.c: setup_stack) stack mmap failed.\n");
 	memset(stack_low, 0, STACK_SIZE);
 	esp = (void *)(STACK_START + STACK_SIZE);
 
@@ -217,12 +212,11 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 
 }
 
-void hpager_load_segments(char *elf, int phnum, Elf64_Phdr pheaders[]) {
+void dpager_load_segments(char *elf, int phnum, Elf64_Phdr pheaders[]) {
 	Elf64_Half i;
 	Elf64_Off offs;
 	Elf64_Phdr *ppntr;
 	Elf64_Addr addr;
-	
 	char *curr;
 	int prot, prot_temp;
 	prot_temp = PROT_READ | PROT_WRITE;
@@ -235,19 +229,8 @@ void hpager_load_segments(char *elf, int phnum, Elf64_Phdr pheaders[]) {
 		size_t v_addr = ppntr->p_vaddr - align;
 		size_t ofs = ppntr->p_offset - align; //compensate for additional padding at beginning of page
 		void *end;
-		//Map only the file data, do not map the BSS segments
-		void *temp = (char*) mmap((void*) v_addr, align + ppntr->p_filesz, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-		if(temp == MAP_FAILED)
-				handle_error("(ElfParser.c: load_segments) segment mmap failed");
-		//copy file at ppntr->offs to ppntr->offs + ppntr->p_filesz TO ppntr->v_addr
-		memmove((void *)ppntr->p_vaddr, elf + ppntr->p_offset, ppntr->p_filesz);
-		if((ppntr->p_flags & PF_R)) 
-			prot |= PROT_READ;
-		if((ppntr->p_flags & PF_W)) 
-			prot |= PROT_WRITE;
-		if(ppntr->p_flags & PF_X) 
-			prot |= PROT_EXEC;
-		mprotect(temp, align + ppntr->p_memsz, prot);
+		//Map only the first page of each segment
+		map_page_from_vaddr(ppntr->p_vaddr, ppntr);
 
 		
 	}
@@ -256,9 +239,9 @@ void hpager_load_segments(char *elf, int phnum, Elf64_Phdr pheaders[]) {
 
 void exec_elf64(char *elf, Elf64_Ehdr *header, int argc, char **argv, char **envp) {
 
-
 	//Actually load the segments into memory
-	hpager_load_segments(elf, header->e_phnum, pheaders);
+	// dpager_load_segments(elf, header->e_phnum, pheaders);
+
 	Elf64_Shdr sheaders[header->e_shnum];
 	uint16_t str_table_dex = header->e_shstrndx;
 	if(str_table_dex == SHN_XINDEX && header->e_shnum > 0) 
@@ -280,40 +263,41 @@ void exec_elf64(char *elf, Elf64_Ehdr *header, int argc, char **argv, char **env
 	
 }
 
-Elf64_Phdr *find_segment_for_addr(Elf64_Addr addr) {
-	Elf64_Phdr *ph;
-	int i;
-	for(i = 0, ph = pheaders; i < elf_header->e_phnum; ++i, ++ph) {
-		if(ph->p_type != PT_LOAD) continue;
-		if((ph->p_vaddr <= addr) && ((ph->p_vaddr + ph->p_memsz) >= addr)) {
-			return ph;
-		}
-	}
-	return NULL;
-}
+
 
 void sigsegv_handler(int sig, siginfo_t *info, void *unused) {
 	char *msg;
 	Elf64_Addr fault_addr = (Elf64_Addr)info->si_addr;
+
 	fprintf(segfault_out, "(my) Segmentation Fault: %p\n", (void *)fault_addr);
 	if((void *)fault_addr == NULL) {
 		msg = "(my) Segmentation Fault: Invalid memory access: 0x0.\n\n";
 		fwrite(msg, 1, strlen(msg), segfault_out); 
 		exit(1);
 	}
+
 	//We need to check whether or not this address falls into any of the pages marked as PT_LOAD
 	int i;
 	int target_segment = -1;
 	Elf64_Phdr *target_phdr = NULL;
-	target_phdr = find_segment_for_addr(fault_addr);
-	if(target_phdr == NULL) {
+	Elf64_Phdr *ph;
+	for(i = 0, ph = pheaders; i < elf_header->e_phnum; ++i, ++ph) {
+		if(ph->p_type != PT_LOAD) continue;
+		if((ph->p_vaddr <= fault_addr) && ((ph->p_vaddr + ph->p_memsz) >= fault_addr)) {
+			target_segment = i;
+			target_phdr = ph;
+			break;
+			//load a page from this segment!
+			//page address is going to be the address of fault_addr rounded down to the nearest page. 
+		}
+	}
+	if(target_segment == -1) {
 		msg = "(my) Segmentation Fault: Bad memory address.\n\n";
-		fwrite(msg, 1, strlen(msg), segfault_out);
+		fwrite(msg, 1, strlen(msg), segfault_out); 
 		exit(1);
 	}
+
 	//else we load a single page from the segment defined by target_phdr
-	void *page = map_page_from_vaddr(fault_addr, target_phdr);
-	Elf64_Addr address_in_file = fault_addr - target_phdr->p_vaddr + target_phdr->p_offset;
 	map_page_from_vaddr(fault_addr, target_phdr);
 	if(fault_addr < target_phdr->p_vaddr + target_phdr->p_filesz) {
 		Elf64_Addr address_in_file = fault_addr - target_phdr->p_vaddr + target_phdr->p_offset;
@@ -321,26 +305,9 @@ void sigsegv_handler(int sig, siginfo_t *info, void *unused) {
 	} else {
 		assert(*(int *)(fault_addr) == 0);
 	}
-	//Map additional pages based on simple heuristic
-	if(PAGES_PER_FAULT > 1) {
-		//try the next page over
-		
-		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr + PAGE_SIZE + 1);
-		target_phdr = find_segment_for_addr(next_segment);
-		if(target_phdr) 
-			map_page_from_vaddr(fault_addr, target_phdr);
-		
-	}
-	if(PAGES_PER_FAULT > 2) {
-		//try the previous page
-		
-		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr - PAGE_SIZE);
-		target_phdr = find_segment_for_addr(next_segment);
-		if(target_phdr) 
-			map_page_from_vaddr(fault_addr, target_phdr);		
-	}
-	msg = "(my) Segmentation Fault: Fault Resolved.\n";
-	fwrite(msg, 1, strlen(msg), segfault_out);
+
+	msg = "(my) Segmentation Fault: Fault Resolved.\n\n";
+	fwrite(msg, 1, strlen(msg), segfault_out); 
 	return;
 }
 
@@ -348,151 +315,61 @@ void setup_handlers(struct sigaction *action) {
 	action->sa_flags = SA_SIGINFO | SA_RESTART;
 	action->sa_sigaction = sigsegv_handler;
 	if(sigaction(SIGSEGV, action, NULL) == -1)
-		handle_error("(hpager.c: setup_handlers) call to sigaction failed.\n\n");
+		handle_error("(dpager.c: setup_handlers) call to sigaction failed.\n");
 }
 
-
-void map_text_and_data(Elf64_Shdr sheaders[]) {
-	//only map data from the text and data sections.
-	int text_sh_idx = -1;
-	int data_sh_idx = -1;
-	int i;
-	Elf64_Shdr *shpntr;
-	for(i = 1, shpntr = sheaders; i < elf_header->e_shnum; ++i, ++shpntr) {
-		if(text_sh_idx == -1 && !strcmp(&section_name_data[shpntr->sh_name], ".text"))
-			text_sh_idx = i;
-		else if( data_sh_idx == -1 && !strcmp(&section_name_data[shpntr->sh_name], ".data"))
-			data_sh_idx = i;
-		if(text_sh_idx != -1 && data_sh_idx != -1) break;
-	}
-	int prot, prot_temp;
-	prot_temp = PROT_READ | PROT_WRITE;
-	if(text_sh_idx != -1) {
-		printf("mapping .text\n");
-		
-		//Load the entire section into memory
-		//base address should be page aligned.
-		Elf64_Shdr text_sh = sheaders[text_sh_idx]; 
-		size_t align = text_sh.sh_addr % sysconf(_SC_PAGE_SIZE);
-		size_t size = (size_t)(align + text_sh.sh_size);
-		Elf64_Addr section_start = text_sh.sh_addr - align;
-		void *section = mmap((void *)(section_start), size, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-		if(section == MAP_FAILED)
-			handle_error("(hpager.c: map_text_and_data): Failed to mmap data for .text.\n");
-		memmove(section + align, elf_memory + text_sh.sh_offset, text_sh.sh_size);
-		printf("successfully mapped .text\n");
-	}
-
-	if(data_sh_idx != -1) {
-		printf("mapping .data\n");
-		//Load the entire section into memory
-		//base address should be page aligned.
-		Elf64_Shdr data_sh = sheaders[data_sh_idx]; 
-		size_t align = data_sh.sh_addr % sysconf(_SC_PAGE_SIZE);
-		size_t size = (size_t)(align + data_sh.sh_size);
-		Elf64_Addr section_start = data_sh.sh_addr - align;
-		void *section = mmap((void *)(section_start), size, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-		if(section == MAP_FAILED)
-			handle_error("(hpager.c: map_text_and_data): Failed to mmap data for .data.\n");
-		memmove(section + align, elf_memory + data_sh.sh_offset, data_sh.sh_size);
-		printf("successfully mapped .data\n");
-	}
-}
-
-void load_string_table(Elf64_Ehdr *header, Elf64_Shdr sheaders[]) {
-	//Assume string table is provided under header->e_shsrndx directly, not supporting link entry.
-	int string_section_idex = header->e_shstrndx;
-	assert(string_section_idex != SHN_UNDEF && string_section_idex < SHN_XINDEX);
-	Elf64_Shdr string_table_header = sheaders[string_section_idex];
-	assert(string_table_header.sh_type == SHT_STRTAB);
-	char *string_data = (char *)(elf_memory + string_table_header.sh_offset);
-	section_name_data = string_data;
-	assert(*string_data == '\0');
-	assert(*(string_data + string_table_header.sh_size - 1) == '\0');
-
-	num_strings = 2; //null at beginning and end
-	char *curr = string_data + 1;
-	size_t len;
-	while(*curr != '\0') {
-		len = strlen(curr);
-		curr += len + 1;
-		++num_strings;
-	}
-	string_table = malloc(sizeof(char *)*num_strings);
-	if(string_table == NULL) 
-		handle_error("(hpager.c: load_string_table): String table malloc failed;\n");
-	int index = 1;
-	curr = string_data + 1;
-	while(*curr != '\0') {
-		len = strlen(curr);
-		curr += len + 1;
-		string_table[index] = curr;
-		++index;
-	}
-	string_table[0] = string_data;
-	string_table[num_strings - 1] = curr;
-}
-
-void print_string_table() {
-	for(int i = 0; i < num_strings; ++i) {
-		printf("%s\n", string_table[i]);
-	}
-}
 
 int main(int argc, char *argv[], char *envp[]) {
 
-		int exec_argc;
+	int exec_argc;
 	char **exec_argv;
 	if(argc > 1 && strcmp(argv[1], "-sig_out") == 0) {
 		segfault_out = fopen(argv[2], "w");
 		if(!segfault_out)
 			handle_error("(hpager.c: main): failed to open segv_out file.\n");
-		fprintf(segfault_out, "Initialized as segfault tracer.\n");
 		exec_argc = argc - 3;
 		exec_argv = &argv[3];
 	} else {
 		exec_argc = argc - 1;
 		exec_argv = &argv[1];
 		segfault_out = stderr;
+		segfault_fd = 1;
 	}
 
-	if(argc <= 1) handle_error("Usage: Require an executable to load.\n");
-
+	if(exec_argc <= 0) handle_error("Usage: Require an executable to load.\n");
 	int fd = open(exec_argv[0], O_RDONLY);
 	if((fd == -1))
-		handle_error("(hpager.c: main): Failed to open executable.\n");
+		handle_error("(dpager.c: main): Failed to open executable.\n");
 
 	elf_fd = fd;
 	elf_memory = load_elf_file(fd);
 
 	Elf64_Ehdr *header = malloc(sizeof(Elf64_Ehdr));
 	if(!header) 
-		handle_error("(hpager.c: main): Failed to mallocate pheaders.\n");	
+		handle_error("(dpager.c: main): Failed to mallocate pheaders.\n");
 	elf_header = header;
+
+
 	read_elf_header_64(elf_memory, header);
 	if(!is_elf(header->e_ident)) {
-		handle_error("(hpager.c: main): Invalid ELF header.\n");
+		handle_error("(dpager.c: main): Invalid ELF header.\n");
 	}
-
-	
+	if(check_overlap(envp, header->e_entry)) 
+		handle_error("Cannot load ourself!\n");
 
 	pheaders = malloc(sizeof(Elf64_Phdr)*header->e_phnum);
 	if(!pheaders)
-		handle_error("(hpager.c: main): Failed to mallocate pheaders.\n");
+		handle_error("(dpager.c: main): Failed to mallocate pheaders.\n");
 	load_pheaders_64(elf_memory, header, pheaders);
 	if(header->e_phnum != 0) {
 		program_header_address = pheaders[0].p_vaddr + header->e_phoff;
 	}
 	
-	if(check_overlap(envp, header->e_entry)) 
-		handle_error("Cannot load ourself!\n");
 
-	Elf64_Shdr sheaders[header->e_shnum];
-	load_sheaders_64(elf_memory, header, sheaders);
-	load_string_table(header, sheaders);	
+
+
 	switch(header->e_type) {
 		case ET_EXEC:
-			//preload .text and .data sections
 			exec_elf64(elf_memory, header, exec_argc, exec_argv, envp);	
 			break;
 		case ET_DYN: 
