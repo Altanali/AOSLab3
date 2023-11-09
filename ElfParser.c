@@ -96,7 +96,7 @@ void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[]) {
 		if(temp == MAP_FAILED)
 				handle_error("(ElfParser.c: load_segments) segment mmap failed");
 		else
-			printf("mmap (%p)\n", (void *)(v_addr));
+			printf("mmap (vaddr: %p, offset: %u, size: %zu)\n", (void *)(v_addr), 0, (size_t)(align + ppntr->p_memsz));
 		//copy file at ppntr->offs to ppntr->offs + ppntr->p_filesz TO ppntr->v_addr
 		memmove((void *)ppntr->p_vaddr, elf + ppntr->p_offset, ppntr->p_filesz);
 		if((ppntr->p_flags & PF_R)) 

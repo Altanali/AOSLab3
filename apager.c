@@ -135,6 +135,8 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 	void *stack_low = mmap((void *)STACK_START, STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN, 0, 0);
 	if(stack_low == MAP_FAILED) 
 		handle_error("(LazyLoader.c: setup_stack) stack mmap failed.\n");
+	else	
+		printf("mmap (vaddr: %p, offset: %zu, size: %lu)\n", (void *)STACK_START, (size_t)0, STACK_SIZE);
 	memset(stack_low, 0, STACK_SIZE);
 	esp = (void *)(STACK_START + STACK_SIZE);
 
