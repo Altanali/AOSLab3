@@ -38,6 +38,8 @@ void *map_page_from_vaddr(Elf64_Addr v_addr, Elf64_Phdr *ph) {
 	void *page = mmap((void *)page_start, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	if(page == MAP_FAILED) 
 		handle_error("(hpager.c: map_page_from_vaddr): Failed to mmap a page.\n");
+	else
+		printf("mmap (%p)\n", (void *)page_start);
 	memset(page, 0, PAGE_SIZE);
 
 	//check that if nothing to copy: 
@@ -187,6 +189,8 @@ void setup_stack(int argc, char *argv[], char *envp[], Elf64_Ehdr *header){
 	void *stack_low = mmap((void *)STACK_START, STACK_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_GROWSDOWN, 0, 0);
 	if(stack_low == MAP_FAILED) 
 		handle_error("(hpager.c: setup_stack) stack mmap failed.\n");
+	else
+		printf("mmap (%p)", (void *)(STACK_START));
 	memset(stack_low, 0, STACK_SIZE);
 	esp = (void *)(STACK_START + STACK_SIZE);
 
@@ -325,21 +329,21 @@ void sigsegv_handler(int sig, siginfo_t *info, void *unused) {
 	if(PAGES_PER_FAULT > 1) {
 		//try the next page over
 		
-		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr + PAGE_SIZE + 1);
-		target_phdr = find_segment_for_addr(next_segment);
+		Elf64_Addr next_page = ELF_PAGESTART(fault_addr + PAGE_SIZE + 1);
+		target_phdr = find_segment_for_addr(next_page);
 		if(target_phdr) 
-			map_page_from_vaddr(fault_addr, target_phdr);
+			map_page_from_vaddr(next_page, target_phdr);
 		
 	}
 	if(PAGES_PER_FAULT > 2) {
 		//try the previous page
 		
-		Elf64_Addr next_segment = ELF_PAGESTART(fault_addr - PAGE_SIZE);
-		target_phdr = find_segment_for_addr(next_segment);
+		Elf64_Addr prev_page = ELF_PAGESTART(fault_addr - PAGE_SIZE);
+		target_phdr = find_segment_for_addr(prev_page);
 		if(target_phdr) 
-			map_page_from_vaddr(fault_addr, target_phdr);		
+			map_page_from_vaddr(prev_page, target_phdr);		
 	}
-	msg = "(my) Segmentation Fault: Fault Resolved.\n";
+	msg = "(my) Segmentation Fault: Fault Resolved.\n\n";
 	fwrite(msg, 1, strlen(msg), segfault_out);
 	return;
 }
@@ -379,6 +383,8 @@ void map_text_and_data(Elf64_Shdr sheaders[]) {
 		void *section = mmap((void *)(section_start), size, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 		if(section == MAP_FAILED)
 			handle_error("(hpager.c: map_text_and_data): Failed to mmap data for .text.\n");
+		else
+			printf("mmap (%p)\n", (void *)(section_start));
 		memmove(section + align, elf_memory + text_sh.sh_offset, text_sh.sh_size);
 		printf("successfully mapped .text\n");
 	}
@@ -394,6 +400,8 @@ void map_text_and_data(Elf64_Shdr sheaders[]) {
 		void *section = mmap((void *)(section_start), size, prot_temp, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 		if(section == MAP_FAILED)
 			handle_error("(hpager.c: map_text_and_data): Failed to mmap data for .data.\n");
+		else
+			printf("mmap (%p)", (void *)(section_start));
 		memmove(section + align, elf_memory + data_sh.sh_offset, data_sh.sh_size);
 		printf("successfully mapped .data\n");
 	}
