@@ -73,7 +73,7 @@ uint64_t calculate_load_size(Elf64_Half phnum, Elf64_Phdr pheaders[]) {
 	return result;
 }
 
-void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[], size_t load_size) {
+void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[]) {
 	Elf64_Half i;
 	Elf64_Off offs;
 	Elf64_Phdr *ppntr;
@@ -174,3 +174,20 @@ char *load_elf_file(int fd) {
 	return result;
 }
 
+
+
+int check_overlap(char **envp, Elf64_Addr other_entry) {
+	char **envpp = envp;
+	Elf64_auxv_t *aux;
+	Elf64_Addr my_entry = 0;
+
+	while(*envpp != NULL) envpp++;
+	envpp++;
+	for (aux = (Elf64_auxv_t *) envpp; aux->a_type != AT_NULL; aux++) {
+		if (aux->a_type == AT_ENTRY) {
+			my_entry = aux->a_un.a_val;	
+		}
+	}
+	return my_entry == other_entry;
+
+}

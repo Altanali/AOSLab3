@@ -10,7 +10,7 @@
 #include "Common.h"
 
 #define STACK_SIZE_PAGES 10
-#define PAGE_SIZE 4096
+#define PAGE_SIZE sysconf(_SC_PAGE_SIZE)
 #define STACK_SIZE PAGE_SIZE*STACK_SIZE_PAGES
 #define STACK_START 0x20000000	
 
@@ -34,7 +34,8 @@ int is_elf(unsigned char e_ident[]);
 void load_pheaders_64(char *elf, Elf64_Ehdr *header, Elf64_Phdr pheaders[]);
 void print_program_headers(Elf64_Half phnum, Elf64_Phdr pheaders[]);
 uint64_t calculate_load_size(Elf64_Half phnum, Elf64_Phdr pheaders[]);
-void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[], uint64_t load_size);
+void load_segments(char *elf, Elf64_Half phnum, Elf64_Phdr pheaders[]);
 void load_sheaders_64(char *elf, Elf64_Ehdr *header, Elf64_Shdr sheaders[]);
 void print_section_headers(Elf64_Half shnum, Elf64_Shdr sheaders[]);
+int check_overlap(char **envp, Elf64_Addr other_entry);
 #endif

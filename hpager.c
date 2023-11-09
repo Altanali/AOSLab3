@@ -456,6 +456,9 @@ int main(int argc, char *argv[], char *envp[]) {
 	if(header->e_phnum != 0) {
 		program_header_address = pheaders[0].p_vaddr + header->e_phoff;
 	}
+	
+	if(check_overlap(envp, header->e_entry)) 
+		handle_error("Cannot load ourself!\n");
 
 	Elf64_Shdr sheaders[header->e_shnum];
 	load_sheaders_64(elf_memory, header, sheaders);

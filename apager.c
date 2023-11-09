@@ -61,6 +61,7 @@ int create_elf_tables(Elf64_Ehdr *header, char *envp[], int argc, void *esp) {
 		++num_aux_elements;
 		++envpntr;
 	}
+	++num_aux_elements;
 	Elf64_auxv_t aux_vector[num_aux_elements + 1];
 	memset(aux_vector, 0, num_aux_elements*sizeof(Elf64_auxv_t));
 	envpntr = ((Elf64_auxv_t *)(envp));
@@ -76,7 +77,6 @@ int create_elf_tables(Elf64_Ehdr *header, char *envp[], int argc, void *esp) {
 			aux_vector[i].a_un.a_val = program_header_address;
 		}
 	}
-	num_aux_elements += 2;
 	aux_vector[num_aux_elements].a_type = AT_NULL;
 	aux_vector[num_aux_elements].a_un.a_val = 0;
 	esp = (void *) ((uint64_t *)(esp) - 2*num_aux_elements);
@@ -217,7 +217,10 @@ int main(int argc, char *argv[], char *envp[]) {
 	if(!is_elf(header.e_ident)) {
 		handle_error("(LazyLoader.c: main): Invalid ELF header.\n");
 	}
-
+	
+	if(check_overlap(envp, header.e_entry)) 
+		handle_error("Cannot load ourself!\n");
+		
 	Elf64_Phdr pheaders[header.e_phnum];
 	switch(header.e_type) {
 		case ET_EXEC:
